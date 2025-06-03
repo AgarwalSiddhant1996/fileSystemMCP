@@ -1,0 +1,215 @@
+from flask import Flask, request, jsonify, send_from_directory, abort
+import os
+import shutil
+from docx import Document
+import urllib.parse
+import fitz
+
+app = Flask(__name__)
+
+# Configure the Downloads folder path and OneDrive path
+DOWNLOADS_FOLDER = "C:\\Users\\siddhagarwal\\"
+ONEDRIVE_FOLDER = os.path.join(DOWNLOADS_FOLDER, "OneDrive - Microsoft")
+
+@app.route("/")
+def home():
+    return """
+    <!doctype html>
+    <html lang="en">
+    <head>
+        <title>MCP Server</title>
+    </head>
+    <body>
+        <h1>Welcome to the MCP Server</h1>
+        <p>The server is running correctly.</p>
+    </body>
+    </html>
+    """, 200
+
+
+@app.route("/initialize", methods=["POST"])
+def initialize():
+    data = request.get_json()
+    response = {
+        "status": "success",
+        "serverName": "MCP Server",
+        "supportedVersion": "1.0.0",
+        "message": "Initialization successful"
+    }
+    return jsonify(response), 200
+
+@app.route('/files', methods=['GET'])
+def list_files():
+    """List all files and directories in the Downloads folder."""
+    try:
+        files = os.listdir(DOWNLOADS_FOLDER)
+        return jsonify({"files": files})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/file/<path:filename>', methods=['GET'])
+def download_file(filename):
+    """Download a specified file from the Downloads folder."""
+    try:
+        file_path = os.path.join(DOWNLOADS_FOLDER, filename)
+        if os.path.exists(file_path):
+            return send_from_directory(DOWNLOADS_FOLDER, filename, as_attachment=True)
+        else:
+            abort(404, description="File not found")
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/file', methods=['POST'])
+def create_file():
+    """Create a new file in the Downloads folder with provided filename and content."""
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Invalid JSON payload."}), 400
+
+    filename = data.get("filename")
+    content = data.get("content")
+    if not filename or not content:
+        return jsonify({"error": "Both 'filename' and 'content' are required."}), 400
+
+    file_path = os.path.join(DOWNLOADS_FOLDER, filename)
+    try:
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return jsonify({"message": "File created successfully", "file": filename}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/file/<path:filename>', methods=['DELETE'])
+def delete_file(filename):
+    """Delete a specified file from the Downloads folder."""
+    file_path = os.path.join(DOWNLOADS_FOLDER, filename)
+    if os.path.exists(file_path):
+        try:
+            os.remove(file_path)
+            return jsonify({"message": "File deleted successfully"}), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    else:
+        return jsonify({"error": "File not found"}), 404
+
+@app.route('/file/copy', methods=['POST'])
+def copy_file():
+    """Copy a file to a new location."""
+    data = request.get_json()
+    source_filename = data.get("source_filename")
+    destination_path = data.get("destination_path")
+
+    if not source_filename or not destination_path:
+        return jsonify({"error": "Both 'source_filename' and 'destination_path' are required."}), 400
+
+    source_path = os.path.join(DOWNLOADS_FOLDER, source_filename)
+    destination_full_path = os.path.join(DOWNLOADS_FOLDER, destination_path, source_filename)
+
+    if os.path.exists(source_path):
+        shutil.copy2(source_path, destination_full_path)
+        return jsonify({"message": "File copied successfully"}), 200
+    else:
+        return jsonify({"error": "Source file not found"}), 404
+
+@app.route('/file/cut', methods=['POST'])
+def cut_file():
+    """Cut a file (remove after copy to destination)."""
+    data = request.get_json()
+    source_filename = data.get("source_filename")
+    destination_path = data.get("destination_path")
+
+    if not source_filename or not destination_path:
+        return jsonify({"error": "Both 'source_filename' and 'destination_path' are required."}), 400
+
+    source_path = os.path.join(DOWNLOADS_FOLDER, source_filename)
+    destination_full_path = os.path.join(DOWNLOADS_FOLDER, destination_path, source_filename)
+
+    if os.path.exists(source_path):
+        shutil.copy2(source_path, destination_full_path)
+        os.remove(source_path)
+        return jsonify({"message": "File cut successfully"}), 200
+    else:
+        return jsonify({"error": "Source file not found"}), 404
+
+@app.route('/folder', methods=['POST'])
+def create_folder():
+    """Create a new folder in the Downloads directory."""
+    data = request.get_json()
+    folder_name = data.get("folder_name")
+
+    if not folder_name:
+        return jsonify({"error": "Folder name is required."}), 400
+
+    folder_path = os.path.join(DOWNLOADS_FOLDER, folder_name)
+    os.makedirs(folder_path, exist_ok=True)
+    return jsonify({"message": "Folder created successfully", "folder": folder_name}), 201
+
+@app.route('/folder/<path:folder_name>', methods=['DELETE'])
+def delete_folder(folder_name):
+    """Delete a specified folder from the Downloads directory."""
+    folder_path = os.path.join(DOWNLOADS_FOLDER, folder_name)
+
+    if os.path.exists(folder_path) and os.path.isdir(folder_path):
+        shutil.rmtree(folder_path)
+        return jsonify({"message": "Folder deleted successfully"}), 200
+    else:
+        return jsonify({"error": "Folder not found"}), 404
+
+@app.route('/folder/<path:folder_name>/contents', methods=['GET'])
+def list_folder_contents(folder_name):
+    """Lists all files and directories inside a specific folder."""
+    folder_path = os.path.join(DOWNLOADS_FOLDER, folder_name)
+
+    if not os.path.exists(folder_path) or not os.path.isdir(folder_path):
+        return jsonify({"error": "Folder not found"}), 404
+
+    try:
+        contents = os.listdir(folder_path)
+        return jsonify({"contents": contents}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/file/read/word/<path:filename>', methods=['GET'])
+def read_word_file(filename):
+    try:
+        filename = urllib.parse.unquote(filename)
+        print(f"Received filename: {filename}")
+        
+        # Use the full path including OneDrive folder
+        file_path = os.path.join(ONEDRIVE_FOLDER, filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({"error": "File not found"}), 404
+            
+        # Read the document directly
+        doc = Document(file_path)
+        content = {"filename": filename, "paragraphs": [p.text for p in doc.paragraphs]}
+        return jsonify(content)
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/file/read/pdf/<path:filename>', methods=['GET'])
+def read_pdf_file(filename):
+    try:
+        filename = urllib.parse.unquote(filename)
+        print(f"Received PDF filename: {filename}")
+        file_path = os.path.join(ONEDRIVE_FOLDER, filename)
+        if not os.path.exists(file_path):
+            return jsonify({"error": "File not found"}), 404
+        paragraphs = []
+        doc = fitz.open(file_path)
+        for page in doc:
+            text = page.get_text()
+            if text:
+                paragraphs.extend(text.split('\n'))
+        content = {"filename": filename, "paragraphs": paragraphs}
+        return jsonify(content)
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+if __name__ == '__main__':
+    app.run(host="0.0.0.0", port=5000, debug=True)
