@@ -1,5 +1,5 @@
 # fileSystemMCP
-An MCP server config to manage the file system of any directory in my PC
+An MCP server config to manage the file system of any directory in a PC
 
 How to use it?
 
